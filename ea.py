@@ -157,7 +157,8 @@ def explode_column(
 
     working = working.drop(columns=[source_col]).explode(item_name)
     working[item_name] = working[item_name].fillna("").astype(str).str.strip()
-    return working[working[item_name] != ""]
+    working = working[working[item_name] != ""]
+    return working.reset_index(drop=True)
 
 
 def build_agent_dataset(data_path: str | Path | None = None) -> pd.DataFrame:
