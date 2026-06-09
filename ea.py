@@ -57,10 +57,37 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parent
 
 
+def _normalized_filename(value: str) -> str:
+    return unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii").lower()
+
+
 def get_data_path(data_path: str | Path | None = None) -> Path:
-    if data_path is None:
-        return _project_root() / DATA_FILE
-    return Path(data_path)
+    if data_path is not None:
+        return Path(data_path)
+
+    root = _project_root()
+    exact_path = root / DATA_FILE
+    if exact_path.exists():
+        return exact_path
+
+    target_name = _normalized_filename(DATA_FILE)
+    csv_files = sorted(root.glob("*.csv"))
+
+    for candidate in csv_files:
+        if _normalized_filename(candidate.name) == target_name:
+            return candidate
+
+    for candidate in csv_files:
+        normalized = _normalized_filename(candidate.name)
+        if "diagnostico" in normalized and "agentes" in normalized:
+            return candidate
+
+    if len(csv_files) == 1:
+        return csv_files[0]
+
+    raise FileNotFoundError(
+        "No se encontró el archivo CSV de la encuesta en el directorio del proyecto."
+    )
 
 
 def load_raw_data(data_path: str | Path | None = None) -> pd.DataFrame:
