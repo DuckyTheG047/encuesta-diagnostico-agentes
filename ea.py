@@ -38,20 +38,10 @@ AUTONOMY_ORDER = [
     "Sugiere",
     "Trabaja y espera aprobación",
     "Ejecuta algunas acciones automáticamente.",
+    "Opera procesos completos.",
 ]
 
 AUTONOMY_MAP = {label: index + 1 for index, label in enumerate(AUTONOMY_ORDER)}
-
-TYPE_PATTERNS = [
-    "Knowledge Agent",
-    "Analyst Agent",
-    "Synthesis Agent",
-    "Recommendation Agent",
-    "Content Agent",
-    "Orchestrator Agent",
-    "Innovation Agent",
-]
-
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parent
@@ -61,29 +51,38 @@ def _normalized_filename(value: str) -> str:
     return unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii").lower()
 
 
+def _survey_file_sort_key(path: Path) -> tuple[int, float, str]:
+    numbers = re.findall(r"\((\d+)\)", path.name)
+    version = int(numbers[-1]) if numbers else 0
+    return (version, path.stat().st_mtime, path.name)
+
+
+def list_survey_csv_files() -> list[Path]:
+    root = _project_root()
+    csv_files = sorted(root.glob("*.csv"))
+    matching_files = []
+    for candidate in csv_files:
+        normalized = _normalized_filename(candidate.name)
+        if "diagnostico" in normalized and "agentes" in normalized:
+            matching_files.append(candidate)
+    return sorted(matching_files, key=_survey_file_sort_key)
+
+
 def get_data_path(data_path: str | Path | None = None) -> Path:
     if data_path is not None:
         return Path(data_path)
 
     root = _project_root()
     exact_path = root / DATA_FILE
+    csv_files = list_survey_csv_files()
+    if csv_files:
+        return csv_files[-1]
     if exact_path.exists():
         return exact_path
 
-    target_name = _normalized_filename(DATA_FILE)
-    csv_files = sorted(root.glob("*.csv"))
-
-    for candidate in csv_files:
-        if _normalized_filename(candidate.name) == target_name:
-            return candidate
-
-    for candidate in csv_files:
-        normalized = _normalized_filename(candidate.name)
-        if "diagnostico" in normalized and "agentes" in normalized:
-            return candidate
-
-    if len(csv_files) == 1:
-        return csv_files[0]
+    generic_csv_files = sorted(root.glob("*.csv"))
+    if len(generic_csv_files) == 1:
+        return generic_csv_files[0]
 
     raise FileNotFoundError(
         "No se encontró el archivo CSV de la encuesta en el directorio del proyecto."
@@ -138,8 +137,12 @@ def extract_agent_type_short(value: object) -> list[str]:
     types = split_multivalue(value)
     short_types = []
     for agent_type in types:
-        matched = next((pattern for pattern in TYPE_PATTERNS if pattern in agent_type), agent_type)
-        short_types.append(matched)
+        normalized = normalize_text(agent_type)
+        match = re.match(r"^([A-Za-z ]+Agent)", normalized)
+        if match:
+            short_types.append(match.group(1).strip())
+        else:
+            short_types.append(normalized)
     return short_types
 
 
@@ -249,3 +252,36 @@ def build_summary(df: pd.DataFrame) -> dict[str, float]:
         "avg_relevance": avg_relevance,
         "baseline_total": baseline_total,
     }
+
+
+def build_new_categories_summary(data_path: str | Path | None = None) -> dict[str, list[str]]:
+    csv_files = list_survey_csv_files()
+    if len(csv_files) < 2:
+        return {}
+
+    current_path = get_data_path(data_path)
+    current_index = next((i for i, path in enumerate(csv_files) if path == current_path), len(csv_files) - 1)
+    if current_index == 0:
+        return {}
+
+    previous_path = csv_files[current_index - 1]
+    previous_df = load_raw_data(previous_path)
+    current_df = load_raw_data(current_path)
+
+    summary: dict[str, list[str]] = {}
+    for column, label in MULTI_VALUE_COLUMNS.items():
+        previous_values = {
+            item
+            for value in previous_df[column].dropna().astype(str)
+            for item in split_multivalue(value)
+        }
+        current_values = {
+            item
+            for value in current_df[column].dropna().astype(str)
+            for item in split_multivalue(value)
+        }
+        new_values = sorted(current_values - previous_values)
+        if new_values:
+            summary[label] = new_values
+
+    return summary

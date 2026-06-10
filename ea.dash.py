@@ -10,8 +10,10 @@ from ea import (
     build_agent_dataset,
     build_counts_table,
     build_heatmap_table,
+    build_new_categories_summary,
     build_summary,
     extract_agent_type_short,
+    get_data_path,
 )
 
 
@@ -25,6 +27,11 @@ st.set_page_config(
 @st.cache_data
 def load_dashboard_data() -> pd.DataFrame:
     return build_agent_dataset()
+
+
+@st.cache_data
+def load_new_categories() -> dict[str, list[str]]:
+    return build_new_categories_summary()
 
 
 def color_scale_chart(df: pd.DataFrame, x: str, y: str, color: str, title: str, horizontal: bool = False):
@@ -54,11 +61,14 @@ def color_scale_chart(df: pd.DataFrame, x: str, y: str, color: str, title: str, 
 
 
 df = load_dashboard_data()
+new_categories = load_new_categories()
+data_path = get_data_path()
 
 st.title("Tablero de diagnóstico de agentes de IA")
 st.caption(
     "Vista ejecutiva para analizar desempeño, relevancia operativa y brechas de los agentes usados en distintas áreas de negocio."
 )
+st.caption(f"Fuente activa: `{data_path.name}`")
 
 with st.sidebar:
     st.header("Filtros")
@@ -67,10 +77,16 @@ with st.sidebar:
         options=sorted(df["Área responsable"].dropna().unique().tolist()),
         default=sorted(df["Área responsable"].dropna().unique().tolist()),
     )
+    autonomy_options = [
+        item for item in AUTONOMY_ORDER if item in df["Nivel de autonomía"].dropna().unique()
+    ]
+    autonomy_extras = sorted(
+        [item for item in df["Nivel de autonomía"].dropna().unique() if item not in AUTONOMY_ORDER]
+    )
     autonomy = st.multiselect(
         "Nivel de autonomía",
-        options=[item for item in AUTONOMY_ORDER if item in df["Nivel de autonomía"].unique()],
-        default=[item for item in AUTONOMY_ORDER if item in df["Nivel de autonomía"].unique()],
+        options=autonomy_options + autonomy_extras,
+        default=autonomy_options + autonomy_extras,
     )
     score_min = st.slider("Score general mínimo", min_value=1.0, max_value=5.0, value=1.0, step=0.1)
     relevance_cut = st.slider("Índice de relevancia mínimo", min_value=0, max_value=100, value=0, step=5)
@@ -163,9 +179,20 @@ with tab1:
     fig_scatter.update_layout(height=500)
     st.plotly_chart(fig_scatter, use_container_width=True)
 
-    ranking_df = filtered_df.sort_values("Indice Relevancia", ascending=True)[
-        ["Nombre del Agente", "Indice Relevancia", "Score General"]
-    ]
+    ranking_df = (
+        filtered_df.groupby("Nombre del Agente", as_index=False)
+        .agg(
+            Indice_Relevancia=("Indice Relevancia", "mean"),
+            Score_General=("Score General", "mean"),
+        )
+        .rename(
+            columns={
+                "Indice_Relevancia": "Indice Relevancia",
+                "Score_General": "Score General",
+            }
+        )
+        .sort_values("Indice Relevancia", ascending=True)
+    )
     st.plotly_chart(
         color_scale_chart(
             ranking_df,
@@ -252,6 +279,16 @@ with tab2:
         coloraxis_showscale=False,
     )
     st.plotly_chart(fig_type_heatmap, use_container_width=True)
+
+    if "tipo_agente" in new_categories:
+        st.success(f"Nuevos tipos de agente incorporados: {', '.join(new_categories['tipo_agente'])}")
+    if "capacidades" in new_categories or "objetivos" in new_categories:
+        pieces = []
+        if "capacidades" in new_categories:
+            pieces.append(f"capacidades: {', '.join(new_categories['capacidades'])}")
+        if "objetivos" in new_categories:
+            pieces.append(f"objetivos: {', '.join(new_categories['objetivos'])}")
+        st.info("Nuevas perspectivas detectadas en esta ola: " + " | ".join(pieces))
 
 with tab3:
     st.subheader("Desempeño por agente")
